@@ -5,6 +5,10 @@ import io
 import json
 
 
+class Error(Exception):
+    pass
+
+
 class Cronometer:
 
     GWT_RPC_MODULE_BASE = "https://cronometer.com/cronometer/"
@@ -26,7 +30,7 @@ class Cronometer:
     GWT_BASE_URL = "https://cronometer.com/cronometer/app"
     GWT_USER_ID_REGEX = re.compile(r"//OK\[(?P<userid>\d+),")
 
-    def __init__(self, username, password):
+    def __init__(self, username: str, password: str):
         self.session = requests.session()
 
         r = self.session.post(
@@ -49,7 +53,7 @@ class Cronometer:
         r.raise_for_status()
         r = r.json()
         if "error" in r:
-            raise Exception(r["error"])
+            raise Error(r["error"])
 
         r = self.session.post(
             self.GWT_BASE_URL,
@@ -58,11 +62,9 @@ class Cronometer:
         )
         r.raise_for_status()
         if not r.text.startswith("//OK"):
-            raise Exception(r.text)
+            raise Error(r.text)
 
-        if "sesnonce" in self.session.cookies:
-            self.sesnonce = self.session.cookies["sesnonce"]
-
+        self.sesnonce = self.session.cookies["sesnonce"]
         self.user_id = json.loads(r.text[4:])[0]
 
     def _generate_auth_token(self):
@@ -73,7 +75,7 @@ class Cronometer:
         )
         r.raise_for_status()
         if not r.text.startswith("//OK"):
-            raise Exception(r.text)
+            raise Error(r.text)
         return json.loads(r.text[4:])[1]
 
     def export(self, **params):
