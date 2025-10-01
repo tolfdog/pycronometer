@@ -10,7 +10,6 @@ class Error(Exception):
 
 
 class Cronometer:
-
     GWT_RPC_MODULE_BASE = "https://cronometer.com/cronometer/"
 
     GWT_RPC_SERVICE_STRONG_NAME = "2D6A926E3729946302DC68073CB0D550"
