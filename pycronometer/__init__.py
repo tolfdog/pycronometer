@@ -30,17 +30,15 @@ class Cronometer:
     GWT_USER_ID_REGEX = re.compile(r"//OK\[(?P<userid>\d+),")
 
     def __init__(self, username: str, password: str):
-        self.session = requests.session()
+        session = requests.session()
 
-        r = self.session.post(
+        r = session.post(
             self.API_LOGIN_URL,
             data={
                 "username": username,
                 "password": password,
                 "anticsrf": (
-                    BeautifulSoup(
-                        self.session.get(self.HTML_LOGIN_URL).text, "html.parser"
-                    )
+                    BeautifulSoup(session.get(self.HTML_LOGIN_URL).text, "html.parser")
                     .find("input", {"name": "anticsrf"})
                     .get("value")
                 ),
@@ -54,7 +52,7 @@ class Cronometer:
         if "error" in r:
             raise Error(r["error"])
 
-        r = self.session.post(
+        r = session.post(
             self.GWT_BASE_URL,
             data=f"7|0|5|{self.GWT_RPC_MODULE_BASE}|{self.GWT_RPC_SERVICE_STRONG_NAME}|{self.GWT_RPC_SERVICE_NAME}|authenticate|java.lang.Integer/3438268394|1|2|3|4|1|5|5|-480|",
             headers=self.GWT_HTTP_HEADERS,
@@ -63,11 +61,11 @@ class Cronometer:
         if not r.text.startswith("//OK"):
             raise Error(r.text)
 
-        self.sesnonce = self.session.cookies["sesnonce"]
+        self.sesnonce = session.cookies["sesnonce"]
         self.user_id = json.loads(r.text[4:])[0]
 
     def _generate_auth_token(self):
-        r = self.session.post(
+        r = requests.post(
             self.GWT_BASE_URL,
             data=f"7|0|8|{self.GWT_RPC_MODULE_BASE}|{self.GWT_RPC_SERVICE_STRONG_NAME}|{self.GWT_RPC_SERVICE_NAME}|generateAuthorizationToken|java.lang.String/2004016611|I|com.cronometer.shared.user.AuthScope/2065601159|{self.sesnonce}|1|2|3|4|4|5|6|6|7|8|{self.user_id}|3600|7|2|",
             headers=self.GWT_HTTP_HEADERS,
@@ -78,7 +76,7 @@ class Cronometer:
         return json.loads(r.text[4:])[1]
 
     def export(self, **params):
-        r = self.session.get(
+        r = requests.get(
             "https://cronometer.com/export",
             params={"nonce": self._generate_auth_token(), **params},
             stream=True,
