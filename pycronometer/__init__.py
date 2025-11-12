@@ -29,16 +29,21 @@ class Cronometer:
     GWT_BASE_URL = "https://cronometer.com/cronometer/app"
     GWT_USER_ID_REGEX = re.compile(r"//OK\[(?P<userid>\d+),")
 
-    def __init__(self, username: str, password: str):
+    def __init__(self, user_id: str, sesnonce: str):
+        self.user_id = user_id
+        self.sesnonce = sesnonce
+
+    @classmethod
+    def login(cls, username: str, password: str):
         session = requests.session()
 
         r = session.post(
-            self.API_LOGIN_URL,
+            cls.API_LOGIN_URL,
             data={
                 "username": username,
                 "password": password,
                 "anticsrf": (
-                    BeautifulSoup(session.get(self.HTML_LOGIN_URL).text, "html.parser")
+                    BeautifulSoup(session.get(cls.HTML_LOGIN_URL).text, "html.parser")
                     .find("input", {"name": "anticsrf"})
                     .get("value")
                 ),
@@ -53,16 +58,15 @@ class Cronometer:
             raise Error(r["error"])
 
         r = session.post(
-            self.GWT_BASE_URL,
-            data=f"7|0|5|{self.GWT_RPC_MODULE_BASE}|{self.GWT_RPC_SERVICE_STRONG_NAME}|{self.GWT_RPC_SERVICE_NAME}|authenticate|java.lang.Integer/3438268394|1|2|3|4|1|5|5|-480|",
-            headers=self.GWT_HTTP_HEADERS,
+            cls.GWT_BASE_URL,
+            data=f"7|0|5|{cls.GWT_RPC_MODULE_BASE}|{cls.GWT_RPC_SERVICE_STRONG_NAME}|{cls.GWT_RPC_SERVICE_NAME}|authenticate|java.lang.Integer/3438268394|1|2|3|4|1|5|5|-480|",
+            headers=cls.GWT_HTTP_HEADERS,
         )
         r.raise_for_status()
         if not r.text.startswith("//OK"):
             raise Error(r.text)
 
-        self.sesnonce = session.cookies["sesnonce"]
-        self.user_id = json.loads(r.text[4:])[0]
+        return cls(json.loads(r.text[4:])[0], session.cookies["sesnonce"])
 
     def _generate_auth_token(self):
         r = requests.post(
