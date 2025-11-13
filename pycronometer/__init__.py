@@ -1,8 +1,11 @@
+import typing
 from bs4 import BeautifulSoup
 import requests
 import re
 import io
 import json
+
+import urllib3
 
 
 class Error(Exception):
@@ -29,24 +32,29 @@ class Cronometer:
     GWT_BASE_URL = "https://cronometer.com/cronometer/app"
     GWT_USER_ID_REGEX = re.compile(r"//OK\[(?P<userid>\d+),")
 
-    def __init__(self, user_id: str, sesnonce: str):
-        self.user_id = user_id
-        self.sesnonce = sesnonce
+    session: typing.Tuple[int, str] | None
+
+    def __init__(self, username: str, password: str):
+        self.username = username
+        self.password = password
+        self.session = None
 
     @classmethod
-    def login(cls, username: str, password: str):
+    def _get_anticsrf_token(cls, session: requests.Session):
+        soup = BeautifulSoup(session.get(cls.HTML_LOGIN_URL).text, "html.parser")
+        input = soup.find("input", {"name": "anticsrf"})
+        assert input is not None
+        return input.get("value")
+
+    def _login(self):
         session = requests.session()
 
         r = session.post(
-            cls.API_LOGIN_URL,
+            self.API_LOGIN_URL,
             data={
-                "username": username,
-                "password": password,
-                "anticsrf": (
-                    BeautifulSoup(session.get(cls.HTML_LOGIN_URL).text, "html.parser")
-                    .find("input", {"name": "anticsrf"})
-                    .get("value")
-                ),
+                "username": self.username,
+                "password": self.password,
+                "anticsrf": self._get_anticsrf_token(session),
             },
             headers={
                 "content-type": "application/x-www-form-urlencoded",
@@ -57,32 +65,99 @@ class Cronometer:
         if "error" in r:
             raise Error(r["error"])
 
+        self.session = (
+            self._gwt_call(
+                session,
+                [
+                    7,
+                    0,
+                    5,
+                    self.GWT_RPC_MODULE_BASE,
+                    self.GWT_RPC_SERVICE_STRONG_NAME,
+                    self.GWT_RPC_SERVICE_NAME,
+                    "authenticate",
+                    "java.lang.Integer/3438268394",
+                    1,
+                    2,
+                    3,
+                    4,
+                    1,
+                    5,
+                    5,
+                    -480,
+                ],
+            )[0],
+            session.cookies["sesnonce"],
+        )
+
+    @classmethod
+    def _gwt_call(cls, session: requests.Session, body: typing.List[str | int]):
         r = session.post(
             cls.GWT_BASE_URL,
-            data=f"7|0|5|{cls.GWT_RPC_MODULE_BASE}|{cls.GWT_RPC_SERVICE_STRONG_NAME}|{cls.GWT_RPC_SERVICE_NAME}|authenticate|java.lang.Integer/3438268394|1|2|3|4|1|5|5|-480|",
+            data="|".join(str(x) for x in body) + "|",
             headers=cls.GWT_HTTP_HEADERS,
         )
         r.raise_for_status()
+        payload = json.loads(r.text[4:])
+
         if not r.text.startswith("//OK"):
-            raise Error(r.text)
+            raise Error(*payload)
 
-        return cls(json.loads(r.text[4:])[0], session.cookies["sesnonce"])
+        return payload
 
-    def _generate_auth_token(self):
-        r = requests.post(
-            self.GWT_BASE_URL,
-            data=f"7|0|8|{self.GWT_RPC_MODULE_BASE}|{self.GWT_RPC_SERVICE_STRONG_NAME}|{self.GWT_RPC_SERVICE_NAME}|generateAuthorizationToken|java.lang.String/2004016611|I|com.cronometer.shared.user.AuthScope/2065601159|{self.sesnonce}|1|2|3|4|4|5|6|6|7|8|{self.user_id}|3600|7|2|",
-            headers=self.GWT_HTTP_HEADERS,
-        )
-        r.raise_for_status()
-        if not r.text.startswith("//OK"):
-            raise Error(r.text)
-        return json.loads(r.text[4:])[1]
+    def _generate_auth_token(self) -> str:
+        assert self.session is not None
 
-    def export(self, **params):
+        user_id, sesnonce = self.session
+        return self._gwt_call(
+            requests.Session(),
+            [
+                7,
+                0,
+                8,
+                self.GWT_RPC_MODULE_BASE,
+                self.GWT_RPC_SERVICE_STRONG_NAME,
+                self.GWT_RPC_SERVICE_NAME,
+                "generateAuthorizationToken",
+                "java.lang.String/2004016611",
+                "I",
+                "com.cronometer.shared.user.AuthScope/2065601159",
+                sesnonce,
+                1,
+                2,
+                3,
+                4,
+                4,
+                5,
+                6,
+                6,
+                7,
+                8,
+                user_id,
+                3600,
+                7,
+                2,
+            ],
+        )[1]
+
+    def generate_auth_token_or_refresh(self) -> str:
+        if self.session is None:
+            self._login()
+
+        try:
+            return self._generate_auth_token()
+        except Error as e:
+            if e.args[2][0].startswith(
+                "com.cronometer.shared.user.exceptions.NotLoggedInException/"
+            ):
+                self._login()
+
+        return self._generate_auth_token()
+
+    def export(self, **params) -> urllib3.HTTPResponse:
         r = requests.get(
             "https://cronometer.com/export",
-            params={"nonce": self._generate_auth_token(), **params},
+            params={"nonce": self.generate_auth_token_or_refresh(), **params},
             stream=True,
         )
         r.raise_for_status()
